@@ -27,7 +27,7 @@ import type { GitProviderDescriptor, GitProviderRepository } from '../gitProvide
 import type { GitProviderService } from '../gitProviderService';
 import type { GitBranch } from './branch';
 import { getBranchNameWithoutRemote, getRemoteNameFromBranchName } from './branch';
-import type { GitBranchReference, GitReference, GitTagReference } from './reference';
+import type { GitBranchReference, GitReference } from './reference';
 import { getNameWithoutRemote, isBranchReference } from './reference';
 import type { GitRemote } from './remote';
 import type { GitWorktree } from './worktree';
@@ -246,6 +246,11 @@ export class Repository implements Disposable {
 		return this._onDidChangeFileSystem.event;
 	}
 
+	private _commonRepositoryName: string | undefined;
+	get commonRepositoryName(): string | undefined {
+		return this._commonRepositoryName;
+	}
+
 	get formattedName(): string {
 		return this.name;
 	}
@@ -310,7 +315,8 @@ export class Repository implements Disposable {
 				path = path.substring(0, path.length - 5);
 			}
 
-			const prefix = `${basename(path)}: `;
+			this._commonRepositoryName = basename(path);
+			const prefix = `${this._commonRepositoryName}: `;
 			if (!this._name.startsWith(prefix)) {
 				this._name = `${prefix}${this._name}`;
 			}
@@ -990,21 +996,6 @@ export class Repository implements Disposable {
 
 	suspend() {
 		this._suspended = true;
-	}
-
-	@log()
-	tag(...args: string[]) {
-		void this.runTerminalCommand('tag', ...args);
-	}
-
-	@log()
-	tagDelete(tags: GitTagReference | GitTagReference[]) {
-		if (!Array.isArray(tags)) {
-			tags = [tags];
-		}
-
-		const args = ['--delete'];
-		void this.runTerminalCommand('tag', ...args, ...tags.map(t => t.ref));
 	}
 
 	private _fsWatcherDisposable: Disposable | undefined;

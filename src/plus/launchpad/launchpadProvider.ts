@@ -21,6 +21,7 @@ import {
 	getOrOpenPullRequestRepository,
 	getRepositoryIdentityForPullRequest,
 } from '../../git/models/pullRequest';
+import { getPullRequestIdentityValuesFromSearch } from '../../git/models/pullRequest.utils';
 import type { GitRemote } from '../../git/models/remote';
 import type { Repository } from '../../git/models/repository';
 import type { CodeSuggestionCounts, Draft } from '../../gk/models/drafts';
@@ -41,6 +42,7 @@ import { showInspectView } from '../../webviews/commitDetails/actions';
 import type { ShowWipArgs } from '../../webviews/commitDetails/protocol';
 import type { IntegrationResult } from '../integrations/integration';
 import type { ConnectionStateChangeEvent } from '../integrations/integrationService';
+import type { GitHubRepositoryDescriptor } from '../integrations/providers/github';
 import type { EnrichablePullRequest, ProviderActionablePullRequest } from '../integrations/providers/models';
 import {
 	fromProviderPullRequest,
@@ -188,6 +190,7 @@ export type LaunchpadItem = LaunchpadPullRequest & {
 	codeSuggestionsCount: number;
 	codeSuggestions?: TimedResult<Draft[]>;
 	isNew: boolean;
+	isSearched: boolean;
 	actionableCategory: LaunchpadActionCategory;
 	suggestedActions: LaunchpadAction[];
 	openRepository?: OpenRepository;
@@ -316,6 +319,47 @@ export class LaunchpadProvider implements Disposable {
 		}
 
 		return { prs: prs, suggestionCounts: suggestionCounts };
+	}
+
+	private async getSearchedPullRequests(search: string, cancellation?: CancellationToken) {
+		// TODO: This needs to be generalized to work outside of GitHub,
+		// The current idea is that we should iterate the connected integrations and apply their parsing.
+		// Probably we even want to build a map like this: { integrationId: identity }
+		// Then we iterate connected integrations and search in each of them with the corresponding identity.
+		const { ownerAndRepo, prNumber } = getPullRequestIdentityValuesFromSearch(search);
+		let result: TimedResult<SearchedPullRequest[] | undefined> | undefined;
+
+		if (prNumber != null && ownerAndRepo != null) {
+			// TODO: This needs to be generalized to work outside of GitHub
+			const integration = await this.container.integrations.get(HostingIntegrationId.GitHub);
+			const [owner, repo] = ownerAndRepo.split('/', 2);
+			const descriptor: GitHubRepositoryDescriptor = {
+				key: ownerAndRepo,
+				owner: owner,
+				name: repo,
+			};
+			const pr = await withDurationAndSlowEventOnTimeout(
+				integration?.getPullRequest(descriptor, prNumber),
+				'getPullRequest',
+				this.container,
+			);
+			if (pr?.value != null) {
+				result = { value: [{ pullRequest: pr.value, reasons: [] }], duration: pr.duration };
+				return { prs: result, suggestionCounts: undefined };
+			}
+		} else {
+			const integration = await this.container.integrations.get(HostingIntegrationId.GitHub);
+			const prs = await withDurationAndSlowEventOnTimeout(
+				integration?.searchPullRequests(search, undefined, cancellation),
+				'searchPullRequests',
+				this.container,
+			);
+			if (prs != null) {
+				result = { value: prs.value?.map(pr => ({ pullRequest: pr, reasons: [] })), duration: prs.duration };
+				return { prs: result, suggestionCounts: undefined };
+			}
+		}
+		return { prs: undefined, suggestionCounts: undefined };
 	}
 
 	private _enrichedItems: CachedLaunchpadPromise<TimedResult<EnrichedItem[]>> | undefined;
@@ -540,7 +584,13 @@ export class LaunchpadProvider implements Disposable {
 				? item.openRepository.localBranch.name
 				: item.headRef.name;
 
-		return getPullRequestBranchDeepLink(this.container, branchName, item.repoIdentity.remote.url, action);
+		return getPullRequestBranchDeepLink(
+			this.container,
+			branchName,
+			item.repoIdentity.remote.url,
+			action,
+			item.underlyingPullRequest,
+		);
 	}
 
 	private async getMatchingOpenRepository(
@@ -612,12 +662,13 @@ export class LaunchpadProvider implements Disposable {
 	@gate<LaunchpadProvider['getCategorizedItems']>(o => `${o?.force ?? false}`)
 	@log<LaunchpadProvider['getCategorizedItems']>({ args: { 0: o => `force=${o?.force}`, 1: false } })
 	async getCategorizedItems(
-		options?: { force?: boolean },
+		options?: { force?: boolean; search?: string },
 		cancellation?: CancellationToken,
 	): Promise<LaunchpadCategorizedResult> {
 		const scope = getLogScope();
+		const isSearching = ((o?: { search?: string }): o is { search: string } => Boolean(o?.search))(options);
 
-		const fireRefresh = options?.force || this._prs == null;
+		const fireRefresh = !isSearching && (options?.force || this._prs == null);
 
 		const ignoredRepositories = new Set(
 			(configuration.get('launchpad.ignoredRepositories') ?? []).map(r => r.toLowerCase()),
@@ -638,7 +689,9 @@ export class LaunchpadProvider implements Disposable {
 			const [_, enrichedItemsResult, prsWithCountsResult] = await Promise.allSettled([
 				this.container.git.isDiscoveringRepositories,
 				this.getEnrichedItems({ force: options?.force, cancellation: cancellation }),
-				this.getPullRequestsWithSuggestionCounts({ force: options?.force, cancellation: cancellation }),
+				isSearching
+					? this.getSearchedPullRequests(options.search, cancellation)
+					: this.getPullRequestsWithSuggestionCounts({ force: options?.force, cancellation: cancellation }),
 			]);
 
 			if (cancellation?.isCancellationRequested) throw new CancellationError();
@@ -752,7 +805,7 @@ export class LaunchpadProvider implements Disposable {
 						item.suggestedActionCategory,
 					)!;
 					// category overrides
-					if (staleDate != null && item.updatedDate.getTime() < staleDate.getTime()) {
+					if (!options?.search && staleDate != null && item.updatedDate.getTime() < staleDate.getTime()) {
 						actionableCategory = 'other';
 					} else if (codeSuggestionsCount > 0 && item.viewer.isAuthor) {
 						actionableCategory = 'code-suggestions';
@@ -770,6 +823,7 @@ export class LaunchpadProvider implements Disposable {
 						currentViewer: myAccounts.get(item.provider.id)!,
 						codeSuggestionsCount: codeSuggestionsCount,
 						isNew: this.isItemNewInGroup(item, actionableCategory),
+						isSearched: isSearching,
 						actionableCategory: actionableCategory,
 						suggestedActions: suggestedActions,
 						openRepository: openRepository,
@@ -788,7 +842,10 @@ export class LaunchpadProvider implements Disposable {
 			};
 			return result;
 		} finally {
-			this.updateGroupedIds(result?.items ?? []);
+			if (!options?.search) {
+				this.updateGroupedIds(result?.items ?? []);
+			}
+
 			if (result != null && fireRefresh) {
 				this._onDidRefresh.fire(result);
 			}
@@ -926,7 +983,7 @@ export class LaunchpadProvider implements Disposable {
 			if (e.reason === 'connected') {
 				void setContext('gitlens:launchpad:connect', false);
 			} else {
-				void setContext('gitlens:launchpad:connect', await this.hasConnectedIntegration());
+				void setContext('gitlens:launchpad:connect', !(await this.hasConnectedIntegration()));
 			}
 		}
 	}
@@ -1023,17 +1080,31 @@ export function getPullRequestBranchDeepLink(
 	headRefBranchName: string,
 	remoteUrl: string,
 	action?: DeepLinkActionType,
+	pr?: PullRequest,
 ) {
 	const schemeOverride = configuration.get('deepLinks.schemeOverride');
 	const scheme = typeof schemeOverride === 'string' ? schemeOverride : env.uriScheme;
+
+	const searchParams = new URLSearchParams({
+		url: ensureRemoteUrl(remoteUrl),
+	});
+	if (action) {
+		searchParams.set('action', action);
+	}
+	if (pr) {
+		searchParams.set('prId', pr.id);
+		searchParams.set('prTitle', pr.title);
+	}
+	if (pr?.refs) {
+		searchParams.set('prBaseRef', pr.refs.base.sha);
+		searchParams.set('prHeadRef', pr.refs.head.sha);
+	}
 	// TODO: Get the proper pull URL from the provider, rather than tacking .git at the end of the
 	// url from the head ref.
 	return Uri.parse(
 		`${scheme}://${container.context.extension.id}/${'link' satisfies UriTypes}/${DeepLinkType.Repository}/-/${
 			DeepLinkType.Branch
-		}/${encodeURIComponent(headRefBranchName)}?url=${encodeURIComponent(ensureRemoteUrl(remoteUrl))}${
-			action != null ? `&action=${action}` : ''
-		}`,
+		}/${encodeURIComponent(headRefBranchName)}?${searchParams.toString()}`,
 	);
 }
 
@@ -1045,7 +1116,13 @@ const slowEventTimeout = 1000 * 30; // 30 seconds
 
 function withDurationAndSlowEventOnTimeout<T>(
 	promise: Promise<T>,
-	name: 'getMyPullRequests' | 'getCodeSuggestionCounts' | 'getCodeSuggestions' | 'getEnrichedItems',
+	name:
+		| 'getPullRequest'
+		| 'searchPullRequests'
+		| 'getMyPullRequests'
+		| 'getCodeSuggestionCounts'
+		| 'getCodeSuggestions'
+		| 'getEnrichedItems',
 	container: Container,
 ): Promise<TimedResult<T>> {
 	return timedWithSlowThreshold(promise, {

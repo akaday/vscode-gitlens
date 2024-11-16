@@ -2,7 +2,9 @@ import type { GraphBranchesVisibility, ViewShowBranchComparison } from './config
 import type { AIProviders } from './constants.ai';
 import type { IntegrationId } from './constants.integrations';
 import type { TrackedUsage, TrackedUsageKeys } from './constants.telemetry';
+import type { GroupableTreeViewTypes } from './constants.views';
 import type { Environment } from './container';
+import type { FeaturePreviews } from './features';
 import type { Subscription } from './plus/gk/account/subscription';
 import type { Integration } from './plus/integrations/integration';
 import type { DeepLinkServiceState } from './uris/deepLinks/deepLink';
@@ -19,7 +21,6 @@ export type IntegrationAuthenticationKeys =
 export const enum SyncedStorageKeys {
 	Version = 'gitlens:synced:version',
 	PreReleaseVersion = 'gitlens:synced:preVersion',
-	HomeViewWelcomeVisible = 'gitlens:views:welcome:visible',
 }
 
 export type DeprecatedGlobalStorage = {
@@ -36,6 +37,8 @@ export type DeprecatedGlobalStorage = {
 	/** @deprecated */
 	'home:banners:dismissed': string[];
 	/** @deprecated */
+	pendingWelcomeOnFocus: boolean;
+	/** @deprecated */
 	'plus:discountNotificationShown': boolean;
 	/** @deprecated */
 	'plus:migratedAuthentication': boolean;
@@ -45,6 +48,8 @@ export type DeprecatedGlobalStorage = {
 	'views:layout': 'gitlens' | 'scm';
 	/** @deprecated */
 	'views:commitDetails:dismissed': 'sidebar'[];
+	/** @deprecated */
+	'views:welcome:visible': boolean;
 } & {
 	/** @deprecated */
 	[key in `disallow:connection:${string}`]: any;
@@ -54,7 +59,6 @@ export type GlobalStorage = {
 	avatars: [string, StoredAvatar][];
 	repoVisibility: [string, StoredRepoVisibilityInfo][];
 	'deepLinks:pending': StoredDeepLinkContext;
-	pendingWelcomeOnFocus: boolean;
 	pendingWhatsNewOnFocus: boolean;
 	// Don't change this key name ('premium`) as its the stored subscription
 	'premium:subscription': Stored<Subscription & { lastValidatedAt: number | undefined }>;
@@ -65,14 +69,18 @@ export type GlobalStorage = {
 	version: string;
 	// Keep the pre-release version separate from the released version
 	preVersion: string;
-	'views:welcome:visible': boolean;
 	'confirm:draft:storage': boolean;
 	'home:sections:collapsed': string[];
+	'home:walkthrough:dismissed': boolean;
 	'launchpad:groups:collapsed': StoredLaunchpadGroup[];
 	'launchpad:indicator:hasLoaded': boolean;
 	'launchpad:indicator:hasInteracted': string;
+	'launchpadView:groups:expanded': StoredLaunchpadGroup[];
 	'graph:searchMode': StoredGraphSearchMode;
-} & { [key in `confirm:ai:tos:${AIProviders}`]: boolean } & {
+	'views:scm:grouped:welcome:dismissed': boolean;
+} & { [key in `plus:preview:${FeaturePreviews}:usages`]: StoredFeaturePreviewUsagePeriod[] } & {
+	[key in `confirm:ai:tos:${AIProviders}`]: boolean;
+} & {
 	[key in `provider:authentication:skip:${string}`]: boolean;
 } & { [key in `gk:${string}:checkin`]: Stored<StoredGKCheckInResponse> } & {
 	[key in `gk:${string}:organizations`]: Stored<StoredOrganization[]>;
@@ -99,10 +107,11 @@ export type WorkspaceStorage = {
 	'remote:default': string;
 	'starred:branches': StoredStarred;
 	'starred:repositories': StoredStarred;
-	'views:repositories:autoRefresh': boolean;
-	'views:searchAndCompare:pinned': StoredSearchAndCompareItems;
 	'views:commitDetails:autolinksExpanded': boolean;
 	'views:commitDetails:pullRequestExpanded': boolean;
+	'views:repositories:autoRefresh': boolean;
+	'views:searchAndCompare:pinned': StoredSearchAndCompareItems;
+	'views:scm:grouped:selected': GroupableTreeViewTypes;
 } & { [key in `confirm:ai:tos:${AIProviders}`]: boolean } & {
 	[key in `connected:${Integration['key']}`]: boolean;
 };
@@ -303,3 +312,8 @@ export type StoredLaunchpadGroup =
 	| 'draft'
 	| 'other'
 	| 'snoozed';
+
+export interface StoredFeaturePreviewUsagePeriod {
+	startedOn: string;
+	expiresOn: string;
+}

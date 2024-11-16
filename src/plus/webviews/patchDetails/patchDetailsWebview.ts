@@ -508,7 +508,7 @@ export class PatchDetailsWebviewProvider
 		void setContext('gitlens:views:patchDetails:mode', undefined);
 
 		if (this._context.mode === 'create') {
-			void this.container.draftsView.show();
+			void this.container.views.drafts.show();
 		} else if (this._context.draft?.draftType === 'cloud') {
 			if (this._context.draft.type === 'suggested_pr_change') {
 				const repositoryOrIdentity = this._context.draft.changesets?.[0].patches[0].repository;
@@ -518,7 +518,7 @@ export class PatchDetailsWebviewProvider
 					source: 'patchDetails',
 				});
 			} else {
-				void this.container.draftsView.revealDraft(this._context.draft);
+				void this.container.views.drafts.revealDraft(this._context.draft);
 			}
 		}
 	}
@@ -720,7 +720,9 @@ export class PatchDetailsWebviewProvider
 			}
 
 			void showNotification();
-			void this.container.draftsView.refresh(true).then(() => void this.container.draftsView.revealDraft(draft));
+			void this.container.views.drafts
+				.refresh(true)
+				.then(() => void this.container.views.drafts.revealDraft(draft));
 
 			this.closeView();
 		} catch (ex) {
@@ -821,16 +823,16 @@ export class PatchDetailsWebviewProvider
 			const commit = await this.getOrCreateCommitForPatch(patch.gkRepositoryId);
 			if (commit == null) throw new Error('Unable to find commit');
 
-			const summary = await (
+			const result = await (
 				await this.container.ai
 			)?.explainCommit(
 				commit,
 				{ source: 'patchDetails', type: `draft-${this._context.draft.type}` },
 				{ progress: { location: { viewId: this.host.id } } },
 			);
-			if (summary == null) throw new Error('Error retrieving content');
+			if (result == null) throw new Error('Error retrieving content');
 
-			params = { summary: summary };
+			params = { result: result };
 		} catch (ex) {
 			debugger;
 			params = { error: { message: ex.message } };

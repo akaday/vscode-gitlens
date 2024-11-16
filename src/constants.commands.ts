@@ -71,6 +71,7 @@ export const enum Commands {
 	ExternalDiffAll = 'gitlens.externalDiffAll',
 	FetchRepositories = 'gitlens.fetchRepositories',
 	GenerateCommitMessage = 'gitlens.generateCommitMessage',
+	GenerateCommitMessageScm = 'gitlens.scm.generateCommitMessage',
 	GetStarted = 'gitlens.getStarted',
 	GKSwitchOrganization = 'gitlens.gk.switchOrganization',
 	InviteToLiveShare = 'gitlens.inviteToLiveShare',
@@ -149,6 +150,7 @@ export const enum Commands {
 	PlusShowPlans = 'gitlens.plus.showPlans',
 	PlusSignUp = 'gitlens.plus.signUp',
 	PlusStartPreviewTrial = 'gitlens.plus.startPreviewTrial',
+	PlusContinueFeaturePreview = 'gitlens.plus.continueFeaturePreview',
 	PlusUpgrade = 'gitlens.plus.upgrade',
 	PlusValidate = 'gitlens.plus.validate',
 	PlusSimulateSubscription = 'gitlens.plus.simulateSubscription',
@@ -220,9 +222,9 @@ export const enum Commands {
 	ShowTagsView = 'gitlens.showTagsView',
 	ShowTimelinePage = 'gitlens.showTimelinePage',
 	ShowTimelineView = 'gitlens.showTimelineView',
-	ShowWelcomePage = 'gitlens.showWelcomePage',
 	ShowWorktreesView = 'gitlens.showWorktreesView',
 	ShowWorkspacesView = 'gitlens.showWorkspacesView',
+	StartWork = 'gitlens.startWork',
 	StashApply = 'gitlens.stashApply',
 	StashSave = 'gitlens.stashSave',
 	StashSaveFiles = 'gitlens.stashSaveFiles',
@@ -249,6 +251,24 @@ export const enum Commands {
 	ViewsOpenDirectoryDiff = 'gitlens.views.openDirectoryDiff',
 	ViewsOpenDirectoryDiffWithWorking = 'gitlens.views.openDirectoryDiffWithWorking',
 	ViewsOpenUrl = 'gitlens.views.openUrl',
+	WalkthroughConnectIntegrations = 'gitlens.walkthrough.connectIntegrations',
+	WalkthroughGitLensInspect = 'gitlens.walkthrough.gitlensInspect',
+	WalkthroughOpenAcceleratePrReviews = 'gitlens.walkthrough.openAcceleratePrReviews',
+	WalkthroughOpenCommunityVsPro = 'gitlens.walkthrough.openCommunityVsPro',
+	WalkthroughOpenHelpCenter = 'gitlens.walkthrough.openHelpCenter',
+	WalkthroughOpenInteractiveCodeHistory = 'gitlens.walkthrough.openInteractiveCodeHistory',
+	WalkthroughOpenStartIntegrations = 'gitlens.walkthrough.openStartIntegrations',
+	WalkthroughOpenStreamlineCollaboration = 'gitlens.walkthrough.openStreamlineCollaboration',
+	WalkthroughOpenWalkthrough = 'gitlens.walkthrough.openWalkthrough',
+	WalkthroughPlusSignUp = 'gitlens.walkthrough.plus.signUp',
+	WalkthroughPlusUpgrade = 'gitlens.walkthrough.plus.upgrade',
+	WalkthroughPlusReactivate = 'gitlens.walkthrough.plus.reactivate',
+	WalkthroughShowAutolinks = 'gitlens.walkthrough.showAutolinks',
+	WalkthroughShowDraftsView = 'gitlens.walkthrough.showDraftsView',
+	WalkthroughShowGraph = 'gitlens.walkthrough.showGraph',
+	WalkthroughShowLaunchpad = 'gitlens.walkthrough.showLaunchpad',
+	WalkthroughWorktreeCreate = 'gitlens.walkthrough.worktree.create',
+	WalkthoughOpenDevExPlatform = 'gitlens.walkthrough.openDevExPlatform',
 
 	Deprecated_DiffHeadWith = 'gitlens.diffHeadWith',
 	Deprecated_DiffWorkingWith = 'gitlens.diffWorkingWith',
@@ -289,10 +309,12 @@ export type CoreCommands =
 	| 'workbench.action.nextEditor'
 	| 'workbench.action.openWalkthrough'
 	| 'workbench.action.toggleMaximizedPanel'
+	| 'workbench.extensions.action.switchToRelease'
 	| 'workbench.extensions.installExtension'
 	| 'workbench.extensions.uninstallExtension'
 	| 'workbench.files.action.focusFilesExplorer'
 	| 'workbench.view.explorer'
+	| 'workbench.view.extension.gitlensInspect'
 	| 'workbench.view.scm'
 	| `${ViewContainerIds | CoreViewContainerIds}.resetViewContainerLocation`
 	| `${ViewIds}.${'focus' | 'removeView' | 'resetViewLocation' | 'toggleVisibility'}`;

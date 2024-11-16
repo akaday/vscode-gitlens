@@ -201,6 +201,7 @@ abstract class GitHubIntegrationBase<ID extends SupportedIntegrationIds> extends
 			{
 				repos: repos?.map(r => `${r.owner}/${r.name}`),
 				baseUrl: this.apiBaseUrl,
+				includeBody: true,
 			},
 			cancellation,
 		);
@@ -263,6 +264,11 @@ export class GitHubIntegration extends GitHubIntegrationBase<HostingIntegrationI
 
 	protected override get apiBaseUrl(): string {
 		return 'https://api.github.com';
+	}
+
+	override access(): Promise<boolean> {
+		// Always allow GitHub cloud integration access
+		return Promise.resolve(true);
 	}
 
 	// This is a special case for GitHub because we use VSCode's GitHub session, and it can be disconnected

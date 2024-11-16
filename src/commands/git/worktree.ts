@@ -102,7 +102,7 @@ interface CreateState {
 		title?: string;
 	};
 
-	onWorkspaceChanging?: (() => Promise<void>) | (() => void);
+	onWorkspaceChanging?: ((isNewWorktree?: boolean) => Promise<void>) | ((isNewWorktree?: boolean) => void);
 	skipWorktreeConfirmations?: boolean;
 }
 
@@ -139,7 +139,8 @@ interface OpenState {
 		};
 	};
 
-	onWorkspaceChanging?: (() => Promise<void>) | (() => void);
+	onWorkspaceChanging?: ((isNewWorktree?: boolean) => Promise<void>) | ((isNewWorktree?: boolean) => void);
+	isNewWorktree?: boolean;
 	skipWorktreeConfirmations?: boolean;
 }
 
@@ -262,7 +263,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 	protected async *steps(state: PartialStepState<State>): StepGenerator {
 		const context: Context = {
 			repos: this.container.git.openRepositories,
-			associatedView: this.container.worktreesView,
+			associatedView: this.container.views.worktrees,
 			showTags: false,
 			title: this.title,
 		};
@@ -591,7 +592,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 
 			if (state.reveal !== false) {
 				setTimeout(() => {
-					if (this.container.worktreesView.visible) {
+					if (this.container.views.worktrees.visible) {
 						void reveal(worktree, { select: true, focus: false });
 					}
 				}, 100);
@@ -628,6 +629,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 						confirm: action === 'prompt',
 						openOnly: true,
 						overrides: { disallowBack: true },
+						isNewWorktree: true,
 						skipWorktreeConfirmations: state.skipWorktreeConfirmations,
 						onWorkspaceChanging: state.onWorkspaceChanging,
 					} satisfies OpenStepState,
@@ -1081,7 +1083,7 @@ export class WorktreeGitCommand extends QuickCommand<State> {
 
 				const location = convertOpenFlagsToLocation(state.flags);
 				if (location === 'currentWindow' || location === 'newWindow') {
-					await state.onWorkspaceChanging?.();
+					await state.onWorkspaceChanging?.(state.isNewWorktree);
 				}
 
 				openWorkspace(state.worktree.uri, { location: convertOpenFlagsToLocation(state.flags), name: name });

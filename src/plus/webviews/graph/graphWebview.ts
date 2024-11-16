@@ -6,6 +6,7 @@ import { parseCommandContext } from '../../../commands/base';
 import type { CopyDeepLinkCommandArgs } from '../../../commands/copyDeepLink';
 import type { CopyMessageToClipboardCommandArgs } from '../../../commands/copyMessageToClipboard';
 import type { CopyShaToClipboardCommandArgs } from '../../../commands/copyShaToClipboard';
+import type { GenerateCommitMessageCommandArgs } from '../../../commands/generateCommitMessage';
 import type { InspectCommandArgs } from '../../../commands/inspect';
 import type { OpenOnRemoteCommandArgs } from '../../../commands/openOnRemote';
 import type { OpenPullRequestOnRemoteCommandArgs } from '../../../commands/openPullRequestOnRemote';
@@ -23,7 +24,8 @@ import type { GraphShownTelemetryContext, GraphTelemetryContext, TelemetryEvents
 import type { Container } from '../../../container';
 import { CancellationError } from '../../../errors';
 import type { CommitSelectedEvent } from '../../../eventBus';
-import { PlusFeatures } from '../../../features';
+import type { FeaturePreview } from '../../../features';
+import { isFeaturePreviewActive, PlusFeatures } from '../../../features';
 import { executeGitCommand } from '../../../git/actions';
 import * as BranchActions from '../../../git/actions/branch';
 import {
@@ -62,7 +64,11 @@ import { GitContributor } from '../../../git/models/contributor';
 import type { GitGraph, GitGraphRowType } from '../../../git/models/graph';
 import { getGkProviderThemeIconString } from '../../../git/models/graph';
 import type { PullRequest } from '../../../git/models/pullRequest';
-import { getComparisonRefsForPullRequest, serializePullRequest } from '../../../git/models/pullRequest';
+import {
+	getComparisonRefsForPullRequest,
+	getRepositoryIdentityForPullRequest,
+	serializePullRequest,
+} from '../../../git/models/pullRequest';
 import type {
 	GitBranchReference,
 	GitReference,
@@ -115,14 +121,16 @@ import { getContext, onDidChangeContext } from '../../../system/vscode/context';
 import type { OpenWorkspaceLocation } from '../../../system/vscode/utils';
 import { isDarkTheme, isLightTheme, openWorkspace } from '../../../system/vscode/utils';
 import { isWebviewItemContext, isWebviewItemGroupContext, serializeWebviewItemContext } from '../../../system/webview';
+import { DeepLinkActionType } from '../../../uris/deepLinks/deepLink';
 import { RepositoryFolderNode } from '../../../views/nodes/abstract/repositoryFolderNode';
 import type { IpcCallMessageType, IpcMessage, IpcNotification } from '../../../webviews/protocol';
 import type { WebviewHost, WebviewProvider, WebviewShowingArgs } from '../../../webviews/webviewProvider';
 import type { WebviewPanelShowCommandArgs, WebviewShowOptions } from '../../../webviews/webviewsController';
 import { isSerializedState } from '../../../webviews/webviewsController';
-import type { SubscriptionChangeEvent } from '../../gk/account/subscriptionService';
+import type { FeaturePreviewChangeEvent, SubscriptionChangeEvent } from '../../gk/account/subscriptionService';
 import type { ConnectionStateChangeEvent } from '../../integrations/integrationService';
 import { remoteProviderIdToIntegrationId } from '../../integrations/integrationService';
+import { getPullRequestBranchDeepLink } from '../../launchpad/launchpadProvider';
 import type {
 	BranchState,
 	DidChangeRefsVisibilityParams,
@@ -199,6 +207,7 @@ import {
 	DidChangeWorkingTreeNotification,
 	DidFetchNotification,
 	DidSearchNotification,
+	DidStartFeaturePreviewNotification,
 	DoubleClickedCommandType,
 	EnsureRowRequest,
 	GetCountsRequest,
@@ -287,6 +296,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		[DidChangeSubscriptionNotification, this.notifyDidChangeSubscription],
 		[DidChangeWorkingTreeNotification, this.notifyDidChangeWorkingTree],
 		[DidFetchNotification, this.notifyDidFetch],
+		[DidStartFeaturePreviewNotification, this.notifyDidStartFeaturePreview],
 	]);
 	private _refsMetadata: Map<string, GraphRefMetadata | null> | null | undefined;
 	private _search: GitSearch | undefined;
@@ -310,6 +320,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		this._disposable = Disposable.from(
 			configuration.onDidChange(this.onConfigurationChanged, this),
 			this.container.subscription.onDidChange(this.onSubscriptionChanged, this),
+			this.container.subscription.onDidChangeFeaturePreview(this.onFeaturePreviewChanged, this),
 			this.container.git.onDidChangeRepositories(async () => {
 				if (this._etag !== this.container.git.etag) {
 					if (this._discovering != null) {
@@ -525,7 +536,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 			),
 			this.host.registerWebviewCommand('gitlens.graph.openCommitOnRemote', this.openCommitOnRemote),
 			this.host.registerWebviewCommand('gitlens.graph.openCommitOnRemote.multi', this.openCommitOnRemote),
-			this.host.registerWebviewCommand('gitlens.graph.openSCM', this.openSCM),
+			this.host.registerWebviewCommand('gitlens.graph.commitViaSCM', this.commitViaSCM),
 			this.host.registerWebviewCommand('gitlens.graph.rebaseOntoCommit', this.rebase),
 			this.host.registerWebviewCommand('gitlens.graph.resetCommit', this.resetCommit),
 			this.host.registerWebviewCommand('gitlens.graph.resetToCommit', this.resetToCommit),
@@ -673,6 +684,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 				'gitlens.graph.copyWorkingChangesToWorktree',
 				this.copyWorkingChangesToWorktree,
 			),
+			this.host.registerWebviewCommand('gitlens.graph.generateCommitMessage', this.generateCommitMessage),
 		);
 
 		return commands;
@@ -685,7 +697,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 	onFocusChanged(focused: boolean): void {
 		this._showActiveSelectionDetailsDebounced?.cancel();
 
-		if (!focused || this.activeSelection == null || !this.container.commitDetailsView.visible) {
+		if (!focused || this.activeSelection == null || !this.container.views.commitDetails.visible) {
 			return;
 		}
 
@@ -908,6 +920,17 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		}
 	}
 
+	@debug({ args: false })
+	private onFeaturePreviewChanged(e: FeaturePreviewChangeEvent) {
+		if (e.feature !== 'graph') return;
+
+		void this.notifyDidStartFeaturePreview(e);
+	}
+
+	private getFeaturePreview(): FeaturePreview {
+		return this.container.subscription.getFeaturePreview('graph');
+	}
+
 	@debug<GraphWebviewProvider['onRepositoryChanged']>({ args: { 0: e => e.toString() } })
 	private onRepositoryChanged(e: RepositoryChangeEvent) {
 		if (
@@ -1031,8 +1054,8 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 				);
 
 				const details = this.host.isHost('editor')
-					? this.container.commitDetailsView
-					: this.container.graphDetailsView;
+					? this.container.views.commitDetails
+					: this.container.views.graphDetails;
 				if (!details.ready) {
 					void details.show({ preserveFocus: e.preserveFocus }, {
 						commit: commit,
@@ -1409,7 +1432,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		const pr = await branch.getAssociatedPullRequest();
 		if (pr == null) return undefined;
 
-		return this.container.pullRequestView.showPullRequest(pr, branch);
+		return this.container.views.pullRequest.showPullRequest(pr, branch);
 	}
 
 	@debug()
@@ -1533,7 +1556,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 	private onSearchOpenInView(e: SearchOpenInViewParams) {
 		if (this.repository == null) return;
 
-		void this.container.searchAndCompareView.search(this.repository.path, e.search, {
+		void this.container.views.searchAndCompare.search(this.repository.path, e.search, {
 			label: { label: `for ${e.search.query}` },
 			reveal: {
 				select: true,
@@ -1867,6 +1890,21 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 	}
 
 	@debug()
+	private async notifyDidStartFeaturePreview(featurePreview?: FeaturePreview) {
+		if (!this.host.ready || !this.host.visible) {
+			this.host.addPendingIpcNotification(DidStartFeaturePreviewNotification, this._ipcNotificationMap, this);
+			return false;
+		}
+
+		featurePreview ??= this.getFeaturePreview();
+		const [access] = await this.getGraphAccess();
+		return this.host.notify(DidStartFeaturePreviewNotification, {
+			featurePreview: featurePreview,
+			allowed: this.isGraphAccessAllowed(access, featurePreview),
+		});
+	}
+
+	@debug()
 	private async notifyDidChangeWorkingTree() {
 		if (!this.host.ready || !this.host.visible) {
 			this.host.addPendingIpcNotification(DidChangeWorkingTreeNotification, this._ipcNotificationMap, this);
@@ -1900,7 +1938,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		const [access] = await this.getGraphAccess();
 		return this.host.notify(DidChangeSubscriptionNotification, {
 			subscription: access.subscription.current,
-			allowed: access.allowed !== false,
+			allowed: this.isGraphAccessAllowed(access, this.getFeaturePreview()),
 		});
 	}
 
@@ -2341,6 +2379,13 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		return [access, visibility] as const;
 	}
 
+	private isGraphAccessAllowed(
+		access: Awaited<ReturnType<GraphWebviewProvider['getGraphAccess']>>[0] | undefined,
+		featurePreview: FeaturePreview,
+	) {
+		return (access?.allowed ?? false) !== false || isFeaturePreviewActive(featurePreview);
+	}
+
 	private getGraphItemContext(context: unknown): unknown | undefined {
 		const item = typeof context === 'string' ? JSON.parse(context) : context;
 		// Add the `webview` prop to the context if its missing (e.g. when this context doesn't come through via the context menus)
@@ -2508,8 +2553,11 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 
 		const defaultSearchMode = this.container.storage.get('graph:searchMode') ?? 'normal';
 
+		const featurePreview = this.getFeaturePreview();
+
 		return {
 			...this.host.baseWebviewState,
+			webroot: this.host.getWebRoot(),
 			windowFocused: this.isWindowFocused,
 			repositories: await formatRepositories(this.container.git.openRepositories),
 			selectedRepository: this.repository.path,
@@ -2529,7 +2577,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 			lastFetched: new Date(getSettledValue(lastFetchedResult)!),
 			selectedRows: this._selectedRows,
 			subscription: access?.subscription.current,
-			allowed: (access?.allowed ?? false) !== false,
+			allowed: this.isGraphAccessAllowed(access, featurePreview), //(access?.allowed ?? false) !== false,
 			avatars: data != null ? Object.fromEntries(data.avatars) : undefined,
 			refsMetadata: this.resetRefsMetadata() === null ? null : {},
 			loading: deferRows,
@@ -2555,6 +2603,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 			nonce: this.host.cspNonce,
 			workingTreeStats: getSettledValue(workingStatsResult) ?? { added: 0, deleted: 0, modified: 0 },
 			defaultSearchMode: defaultSearchMode,
+			featurePreview: featurePreview,
 		};
 	}
 
@@ -3156,11 +3205,18 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 	}
 
 	@log()
-	private openSCM(item?: GraphItemContext) {
+	private async commitViaSCM(item?: GraphItemContext) {
 		const ref = this.getGraphItemRef(item, 'revision');
-		if (ref == null) return Promise.resolve();
 
-		return executeCoreCommand('workbench.view.scm');
+		await executeCoreCommand('workbench.view.scm');
+		if (ref != null) {
+			const scmRepo = await this.container.git.getScmRepository(ref.repoPath);
+			if (scmRepo == null) return;
+
+			// Update the input box to trigger the focus event
+			// eslint-disable-next-line no-self-assign
+			scmRepo.inputBox.value = scmRepo.inputBox.value;
+		}
 	}
 
 	@log()
@@ -3473,7 +3529,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 			const pr = item.webviewItemValue;
 			if (pr.refs?.base != null && pr.refs.head != null) {
 				const refs = getComparisonRefsForPullRequest(pr.repoPath, pr.refs);
-				return this.container.searchAndCompareView.compare(refs.repoPath, refs.head, refs.base);
+				return this.container.views.searchAndCompare.compare(refs.repoPath, refs.head, refs.base);
 			}
 		}
 
@@ -3504,7 +3560,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		const commonAncestor = await this.container.git.getMergeBase(ref.repoPath, branch.ref, ref.ref);
 		if (commonAncestor == null) return undefined;
 
-		return this.container.searchAndCompareView.compare(ref.repoPath, '', {
+		return this.container.views.searchAndCompare.compare(ref.repoPath, '', {
 			ref: commonAncestor,
 			label: `${branch.ref} (${shortenRevision(commonAncestor)})`,
 		});
@@ -3516,7 +3572,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		if (ref == null) return Promise.resolve();
 
 		const [ref1, ref2] = await getOrderedComparisonRefs(this.container, ref.repoPath, 'HEAD', ref.ref);
-		return this.container.searchAndCompareView.compare(ref.repoPath, ref1, ref2);
+		return this.container.views.searchAndCompare.compare(ref.repoPath, ref1, ref2);
 	}
 
 	@log()
@@ -3524,7 +3580,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		const ref = this.getGraphItemRef(item);
 		if (ref == null) return Promise.resolve();
 
-		return this.container.searchAndCompareView.compare(ref.repoPath, ref.ref, 'HEAD');
+		return this.container.views.searchAndCompare.compare(ref.repoPath, ref.ref, 'HEAD');
 	}
 
 	@log()
@@ -3538,7 +3594,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		const commonAncestor = await this.container.git.getMergeBase(ref.repoPath, branch.ref, ref.ref);
 		if (commonAncestor == null) return undefined;
 
-		return this.container.searchAndCompareView.compare(ref.repoPath, ref.ref, {
+		return this.container.views.searchAndCompare.compare(ref.repoPath, ref.ref, {
 			ref: commonAncestor,
 			label: `${branch.ref} (${shortenRevision(commonAncestor)})`,
 		});
@@ -3571,7 +3627,7 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		if (isGraphItemRefContext(item, 'branch')) {
 			const { ref } = item.webviewItemValue;
 			if (ref.upstream != null) {
-				return this.container.searchAndCompareView.compare(ref.repoPath, ref.ref, ref.upstream.name);
+				return this.container.views.searchAndCompare.compare(ref.repoPath, ref.ref, ref.upstream.name);
 			}
 		}
 
@@ -3583,14 +3639,25 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 		const ref = this.getGraphItemRef(item);
 		if (ref == null) return Promise.resolve();
 
-		return this.container.searchAndCompareView.compare(ref.repoPath, '', ref.ref);
+		return this.container.views.searchAndCompare.compare(ref.repoPath, '', ref.ref);
 	}
 
+	@log()
 	private copyWorkingChangesToWorktree(item?: GraphItemContext) {
 		const ref = this.getGraphItemRef(item);
 		if (ref == null) return Promise.resolve();
 
 		return WorktreeActions.copyChangesToWorktree('working-tree', ref.repoPath);
+	}
+
+	@log()
+	generateCommitMessage(item?: GraphItemContext) {
+		const ref = this.getGraphItemRef(item);
+		if (ref == null) return Promise.resolve();
+
+		return executeCommand<GenerateCommitMessageCommandArgs>(Commands.GenerateCommitMessage, {
+			repoPath: ref.repoPath,
+		});
 	}
 
 	@log()
@@ -3643,6 +3710,24 @@ export class GraphWebviewProvider implements WebviewProvider<State, State, Graph
 	private async openInWorktree(item?: GraphItemContext) {
 		if (isGraphItemRefContext(item, 'branch')) {
 			const { ref } = item.webviewItemValue;
+			const repo = this.container.git.getRepository(ref.repoPath);
+			const branch = await repo?.git.getBranch(ref.name);
+			const pr = await branch?.getAssociatedPullRequest();
+			if (branch != null && repo != null && pr != null) {
+				const remoteUrl = (await branch.getRemote())?.url ?? getRepositoryIdentityForPullRequest(pr).remote.url;
+				if (remoteUrl != null) {
+					const deepLink = getPullRequestBranchDeepLink(
+						this.container,
+						branch.getNameWithoutRemote(),
+						remoteUrl,
+						DeepLinkActionType.SwitchToPullRequestWorktree,
+						pr,
+					);
+
+					return this.container.deepLinks.processDeepLinkUri(deepLink, false, repo);
+				}
+			}
+
 			await executeGitCommand({
 				command: 'switch',
 				state: {

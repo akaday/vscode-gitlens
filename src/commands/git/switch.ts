@@ -34,7 +34,7 @@ interface Context {
 
 interface State {
 	repos: string | string[] | Repository | Repository[];
-	onWorkspaceChanging?: (() => Promise<void>) | (() => void);
+	onWorkspaceChanging?: ((isNewWorktree?: boolean) => Promise<void>) | ((isNewWorktree?: boolean) => void);
 	reference: GitReference;
 	createBranch?: string;
 	fastForwardTo?: GitReference;
@@ -119,7 +119,7 @@ export class SwitchGitCommand extends QuickCommand<State> {
 	protected async *steps(state: PartialStepState<State>): StepGenerator {
 		const context: Context = {
 			repos: this.container.git.openRepositories,
-			associatedView: this.container.commitsView,
+			associatedView: this.container.views.commits,
 			canSwitchToLocalBranch: undefined,
 			promptToCreateBranch: false,
 			showTags: false,

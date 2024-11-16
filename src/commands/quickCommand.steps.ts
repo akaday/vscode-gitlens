@@ -1540,10 +1540,15 @@ export async function* pickRepositoryStep<
 
 	const step = createPickStep<RepositoryQuickPickItem>({
 		title: context.title,
-		placeholder: placeholder,
+		placeholder: context.repos.length === 0 ? `${placeholder} — no opened repositories found` : placeholder,
 		items:
 			context.repos.length === 0
-				? [createDirectiveQuickPickItem(Directive.Cancel)]
+				? [
+						createDirectiveQuickPickItem(Directive.Cancel, true, {
+							label: 'Cancel',
+							detail: 'No opened repositories found',
+						}),
+				  ]
 				: Promise.all(
 						context.repos.map(r =>
 							createRepositoryQuickPickItem(r, r.id === active?.id, {
@@ -1605,10 +1610,16 @@ export async function* pickRepositoriesStep<
 	const step = createPickStep<RepositoryQuickPickItem>({
 		multiselect: true,
 		title: context.title,
-		placeholder: options.placeholder,
+		placeholder:
+			context.repos.length === 0 ? `${options.placeholder} — no opened repositories found` : options.placeholder,
 		items:
 			context.repos.length === 0
-				? [createDirectiveQuickPickItem(Directive.Cancel)]
+				? [
+						createDirectiveQuickPickItem(Directive.Cancel, true, {
+							label: 'Cancel',
+							detail: 'No opened repositories found',
+						}),
+				  ]
 				: Promise.all(
 						context.repos.map(repo =>
 							createRepositoryQuickPickItem(
@@ -2637,9 +2648,9 @@ export async function* ensureAccessStep<
 		const promo = getApplicablePromo(access.subscription.current.state, 'gate');
 		const detail = promo?.quickpick.detail;
 
-		placeholder = 'Pro feature — requires a trial or paid plan for use on privately-hosted repos';
+		placeholder = 'Pro feature — requires a trial or GitLens Pro for use on privately-hosted repos';
 		if (isSubscriptionPaidPlan(access.subscription.required) && access.subscription.current.account != null) {
-			placeholder = 'Pro feature — requires a paid plan for use on privately-hosted repos';
+			placeholder = 'Pro feature — requires GitLens Pro for use on privately-hosted repos';
 			directives.push(
 				createDirectiveQuickPickItem(Directive.RequiresPaidSubscription, true, { detail: detail }),
 				createQuickPickSeparator(),
@@ -2675,7 +2686,7 @@ export async function* ensureAccessStep<
 					iconPath: new ThemeIcon('rocket'),
 					onDidSelect: () =>
 						void executeCommand<OpenWalkthroughCommandArgs>(Commands.OpenWalkthrough, {
-							step: 'launchpad',
+							step: 'accelerate-pr-reviews',
 							source: 'launchpad',
 							detail: 'info',
 						}),

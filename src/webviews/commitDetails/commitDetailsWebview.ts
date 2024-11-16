@@ -788,7 +788,7 @@ export class CommitDetailsWebviewProvider
 		if (pr.refs == null) return;
 
 		const refs = getComparisonRefsForPullRequest(repoPath, pr.refs);
-		return this.container.searchAndCompareView.compare(refs.repoPath, refs.head, refs.base);
+		return this.container.views.searchAndCompare.compare(refs.repoPath, refs.head, refs.base);
 	}
 
 	private async openPullRequestOnRemote(clipboard?: boolean) {
@@ -809,7 +809,7 @@ export class CommitDetailsWebviewProvider
 		const { pr, repoPath, branch, commit } = this.pullRequestContext;
 		if (pr == null) return;
 
-		return this.container.pullRequestView.showPullRequest(pr, commit ?? branch ?? repoPath);
+		return this.container.views.pullRequest.showPullRequest(pr, commit ?? branch ?? repoPath);
 	}
 
 	onRefresh(_force?: boolean | undefined): void {
@@ -1121,16 +1121,16 @@ export class CommitDetailsWebviewProvider
 	private async explainRequest<T extends typeof ExplainRequest>(requestType: T, msg: IpcCallMessageType<T>) {
 		let params: DidExplainParams;
 		try {
-			const summary = await (
+			const result = await (
 				await this.container.ai
 			)?.explainCommit(
 				this._context.commit!,
 				{ source: 'inspect', type: isStash(this._context.commit) ? 'stash' : 'commit' },
 				{ progress: { location: { viewId: this.host.id } } },
 			);
-			if (summary == null) throw new Error('Error retrieving content');
+			if (result == null) throw new Error('Error retrieving content');
 
-			params = { summary: summary };
+			params = { result: result };
 		} catch (ex) {
 			debugger;
 			params = { error: { message: ex.message } };
@@ -1295,7 +1295,7 @@ export class CommitDetailsWebviewProvider
 				wip.pullRequest != null &&
 				(this._context.source === 'launchpad' || this._pendingContext?.source === 'launchpad')
 			) {
-				void this.container.pullRequestView.showPullRequest(wip.pullRequest, wip.branch ?? repository.path);
+				void this.container.views.pullRequest.showPullRequest(wip.pullRequest, wip.branch ?? repository.path);
 				this._shouldRefreshPullRequestDetails = false;
 			}
 

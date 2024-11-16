@@ -1,12 +1,16 @@
 import type { Config, GraphBranchesVisibility, GraphConfig } from './config';
+import type { WalkthroughSteps } from './constants';
 import type { AIModels, AIProviders } from './constants.ai';
 import type { Commands } from './constants.commands';
 import type { IntegrationId, SupportedCloudIntegrationIds } from './constants.integrations';
 import type { SubscriptionState } from './constants.subscription';
 import type { CustomEditorTypes, TreeViewTypes, WebviewTypes, WebviewViewTypes } from './constants.views';
+import type { FeaturePreviews } from './features';
 import type { GitContributionTiers } from './git/models/contributor';
+import type { StartWorkType } from './plus/startWork/startWork';
 import type { Period } from './plus/webviews/timeline/protocol';
 import type { Flatten } from './system/object';
+import type { WalkthroughContextKeys } from './telemetry/walkthroughStateProvider';
 
 export type TelemetryGlobalContext = {
 	'cloudIntegrations.connected.count': number;
@@ -213,6 +217,12 @@ export type TelemetryEvents = {
 		'mode.new': 'wip' | 'commit';
 	} & InspectContextEventData;
 
+	/** Sent when the new Home view preview is toggled on/off */
+	'home/preview/toggled': {
+		enabled: boolean;
+		version: string;
+	};
+
 	/** Sent when the Commit Graph is shown */
 	'timeline/shown': WebviewShownEventData & TimelineShownEventData;
 	/** Sent when the user changes the period (timeframe) on the visual file history */
@@ -293,8 +303,41 @@ export type TelemetryEvents = {
 	/** Sent when a launchpad operation is taking longer than a set timeout to complete */
 	'launchpad/operation/slow': {
 		timeout: number;
-		operation: 'getMyPullRequests' | 'getCodeSuggestions' | 'getEnrichedItems' | 'getCodeSuggestionCounts';
+		operation:
+			| 'getPullRequest'
+			| 'searchPullRequests'
+			| 'getMyPullRequests'
+			| 'getCodeSuggestions'
+			| 'getEnrichedItems'
+			| 'getCodeSuggestionCounts';
 		duration: number;
+	};
+
+	/** Sent when the user opens Start Work; use `instance` to correlate a StartWork "session" */
+	'startWork/open': StartWorkEventDataBase;
+	/** Sent when the launchpad is opened; use `instance` to correlate a StartWork "session" */
+	'startWork/opened': StartWorkEventData & {
+		connected: boolean;
+	};
+	/** Sent when the user chooses an option to start work in the first step */
+	'startWork/type/chosen': StartWorkEventData & {
+		connected: boolean;
+		type: StartWorkType;
+	};
+	/** Sent when the user chooses an issue to start work in the second step */
+	'startWork/issue/chosen': StartWorkEventData & {
+		connected: boolean;
+		type: StartWorkType;
+	} & Partial<Record<`item.${string}`, string | number | boolean>>;
+	/** Sent when the Start Work has "reloaded" (while open, e.g. user refreshed or back button) and is disconnected; use `instance` to correlate a Start Work "session" */
+	'startWork/steps/type': StartWorkEventData & {
+		connected: boolean;
+	};
+	'startWork/steps/connect': StartWorkEventData & {
+		connected: boolean;
+	};
+	'startWork/steps/issue': StartWorkEventData & {
+		connected: boolean;
 	};
 
 	/** Sent when a PR review was started in the inspect overview */
@@ -376,7 +419,8 @@ export type TelemetryEvents = {
 		| {
 				action: 'visibility';
 				visible: boolean;
-		  };
+		  }
+		| FeaturePreviewActionEventData;
 	/** Sent when the subscription changes */
 	'subscription/changed': SubscriptionEventData;
 
@@ -388,25 +432,40 @@ export type TelemetryEvents = {
 
 	/** Sent when the walkthrough is opened */
 	walkthrough: {
-		step?:
-			| 'get-started'
-			| 'core-features'
-			| 'pro-features'
-			| 'pro-trial'
-			| 'pro-upgrade'
-			| 'pro-reactivate'
-			| 'pro-paid'
-			| 'visualize'
-			| 'launchpad'
-			| 'code-collab'
-			| 'integrations'
-			| 'more';
+		step?: WalkthroughSteps;
+	};
+	/** Sent when the walkthrough is opened */
+	'walkthrough/action':
+		| { type: 'command'; name: WalkthroughActionNames; command: string }
+		| { type: 'url'; name: WalkthroughActionNames; url: string };
+	'walkthrough/completion': {
+		'context.key': WalkthroughContextKeys;
 	};
 } & Record<`${WebviewTypes | WebviewViewTypes}/showAborted`, WebviewShownEventData> &
 	Record<
 		`${Exclude<WebviewTypes | WebviewViewTypes, 'commitDetails' | 'graph' | 'graphDetails' | 'timeline'>}/shown`,
 		WebviewShownEventData & Record<`context.${string}`, string | number | boolean | undefined>
 	>;
+
+type WalkthroughActionNames =
+	| 'open/help-center/start-integrations'
+	| 'open/help-center/accelerate-pr-reviews'
+	| 'open/help-center/streamline-collaboration'
+	| 'open/help-center/interactive-code-history'
+	| 'open/help-center/community-vs-pro'
+	| 'open/devex-platform'
+	| 'open/drafts'
+	| 'connect/integrations'
+	| 'open/autolinks'
+	| 'open/graph'
+	| 'open/launchpad'
+	| 'create/worktree'
+	| 'open/help-center'
+	| 'plus/sign-up'
+	| 'plus/upgrade'
+	| 'plus/reactivate'
+	| 'open/walkthrough'
+	| 'open/inspect';
 
 type AIEventDataBase = {
 	'model.id': AIModels;
@@ -445,6 +504,14 @@ export type CommandEventData =
 			'context.submode'?: never;
 			webview?: string;
 	  };
+
+export type StartWorkTelemetryContext = StartWorkEventData;
+
+type StartWorkEventDataBase = {
+	instance: number;
+} & Partial<{ type: StartWorkType }>;
+
+type StartWorkEventData = StartWorkEventDataBase & Partial<{ 'items.count': number }>;
 
 export type LaunchpadTelemetryContext = LaunchpadEventData;
 
@@ -495,6 +562,10 @@ type GraphShownEventData = GraphContextEventData &
 
 export type GraphTelemetryContext = GraphContextEventData;
 export type GraphShownTelemetryContext = GraphShownEventData;
+
+export type HomeTelemetryContext = {
+	'context.preview': string | undefined;
+} & WebviewTelemetryContext;
 
 type InspectContextEventData = (
 	| ({
@@ -611,12 +682,13 @@ export type Sources =
 	| 'quick-wizard'
 	| 'remoteProvider'
 	| 'settings'
+	| 'startWork'
 	| 'timeline'
 	| 'trial-indicator'
 	| 'scm-input'
 	| 'subscription'
 	| 'walkthrough'
-	| 'welcome'
+	| 'whatsnew'
 	| 'worktrees';
 
 export type Source = {
@@ -643,8 +715,17 @@ export type TrackedUsage = {
 	lastUsedAt: number;
 };
 
+export type WalkthroughUsageKeys = 'home:walkthrough:dismissed';
+export type CommandExecutionTrackedFeatures = `command:${Commands}:executed`;
 export type TrackedUsageFeatures =
 	| `${WebviewTypes}Webview`
 	| `${TreeViewTypes | WebviewViewTypes}View`
 	| `${CustomEditorTypes}Editor`;
-export type TrackedUsageKeys = `${TrackedUsageFeatures}:shown`;
+export type TrackedUsageKeys = `${TrackedUsageFeatures}:shown` | CommandExecutionTrackedFeatures | WalkthroughUsageKeys;
+
+export type FeaturePreviewActionsDayEventData = Record<`day.${number}.startedOn`, string>;
+export type FeaturePreviewActionEventData = {
+	action: `start-preview-trial:${FeaturePreviews}`;
+	startedOn: string;
+	day: number;
+} & FeaturePreviewActionsDayEventData;

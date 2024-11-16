@@ -1,7 +1,9 @@
-export const proPreviewLengthInDays = 3;
-export const proTrialLengthInDays = 7;
+export const proFeaturePreviewUsages = 3;
+export const proFeaturePreviewUsageDurationInDays = 1;
+export const proPreviewLengthInDays = 0;
+export const proTrialLengthInDays = 14;
 
-export type PromoKeys = 'devexdays' | 'launchpad-extended' | 'pro50';
+export type PromoKeys = 'gitlens16' | 'pro50';
 
 export const enum SubscriptionPlanId {
 	Community = 'community',

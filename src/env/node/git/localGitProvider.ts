@@ -34,12 +34,14 @@ import {
 	StashApplyError,
 	StashApplyErrorReason,
 	StashPushError,
+	TagError,
 	WorktreeCreateError,
 	WorktreeCreateErrorReason,
 	WorktreeDeleteError,
 	WorktreeDeleteErrorReason,
 } from '../../../git/errors';
 import type {
+	BranchContributorOverview,
 	GitCaches,
 	GitDir,
 	GitProvider,
@@ -59,7 +61,7 @@ import type {
 } from '../../../git/gitProvider';
 import { GitUri, isGitUri } from '../../../git/gitUri';
 import { encodeGitLensRevisionUriAuthority } from '../../../git/gitUri.authority';
-import type { GitBlame, GitBlameAuthor, GitBlameLine, GitBlameLines } from '../../../git/models/blame';
+import type { GitBlame, GitBlameAuthor, GitBlameLine } from '../../../git/models/blame';
 import type { BranchSortOptions } from '../../../git/models/branch';
 import {
 	getBranchId,
@@ -74,7 +76,7 @@ import type { GitStashCommit } from '../../../git/models/commit';
 import { GitCommit, GitCommitIdentity } from '../../../git/models/commit';
 import { deletedOrMissing, uncommitted, uncommittedStaged } from '../../../git/models/constants';
 import type { GitContributorStats } from '../../../git/models/contributor';
-import { GitContributor } from '../../../git/models/contributor';
+import { GitContributor, sortContributors } from '../../../git/models/contributor';
 import type {
 	GitDiff,
 	GitDiffFile,
@@ -106,6 +108,7 @@ import type {
 } from '../../../git/models/reference';
 import {
 	createReference,
+	createRevisionRange,
 	getBranchTrackingWithoutRemote,
 	getReferenceFromBranch,
 	isBranchReference,
@@ -159,7 +162,7 @@ import {
 import { parseGitRefLog, parseGitRefLogDefaultFormat } from '../../../git/parsers/reflogParser';
 import { parseGitRemotes } from '../../../git/parsers/remoteParser';
 import { parseGitStatus } from '../../../git/parsers/statusParser';
-import { parseGitTags } from '../../../git/parsers/tagParser';
+import { parseGitTags, parseGitTagsDefaultFormat } from '../../../git/parsers/tagParser';
 import { parseGitLsFiles, parseGitTree } from '../../../git/parsers/treeParser';
 import { parseGitWorktrees } from '../../../git/parsers/worktreeParser';
 import { getRemoteProviderMatcher, loadRemoteProviders } from '../../../git/remotes/remoteProviders';
@@ -1262,6 +1265,32 @@ export class LocalGitProvider implements GitProvider, Disposable {
 	}
 
 	@log()
+	async createTag(repoPath: string, name: string, ref: string, message?: string): Promise<void> {
+		try {
+			await this.git.tag(repoPath, name, ref, ...(message != null && message.length > 0 ? ['-m', message] : []));
+		} catch (ex) {
+			if (ex instanceof TagError) {
+				throw ex.WithTag(name).WithAction('create');
+			}
+
+			throw ex;
+		}
+	}
+
+	@log()
+	async deleteTag(repoPath: string, name: string): Promise<void> {
+		try {
+			await this.git.tag(repoPath, '-d', name);
+		} catch (ex) {
+			if (ex instanceof TagError) {
+				throw ex.WithTag(name).WithAction('delete');
+			}
+
+			throw ex;
+		}
+	}
+
+	@log()
 	async checkout(
 		repoPath: string,
 		ref: string,
@@ -2066,7 +2095,7 @@ export class LocalGitProvider implements GitProvider, Disposable {
 	}
 
 	@log()
-	async getBlameForRange(uri: GitUri, range: Range): Promise<GitBlameLines | undefined> {
+	async getBlameForRange(uri: GitUri, range: Range): Promise<GitBlame | undefined> {
 		const blame = await this.getBlame(uri);
 		if (blame == null) return undefined;
 
@@ -2074,7 +2103,7 @@ export class LocalGitProvider implements GitProvider, Disposable {
 	}
 
 	@log<LocalGitProvider['getBlameForRangeContents']>({ args: { 2: '<contents>' } })
-	async getBlameForRangeContents(uri: GitUri, range: Range, contents: string): Promise<GitBlameLines | undefined> {
+	async getBlameForRangeContents(uri: GitUri, range: Range, contents: string): Promise<GitBlame | undefined> {
 		const blame = await this.getBlameContents(uri, contents);
 		if (blame == null) return undefined;
 
@@ -2082,11 +2111,11 @@ export class LocalGitProvider implements GitProvider, Disposable {
 	}
 
 	@log<LocalGitProvider['getBlameRange']>({ args: { 0: '<blame>' } })
-	getBlameRange(blame: GitBlame, uri: GitUri, range: Range): GitBlameLines | undefined {
-		if (blame.lines.length === 0) return { allLines: blame.lines, ...blame };
+	getBlameRange(blame: GitBlame, uri: GitUri, range: Range): GitBlame | undefined {
+		if (blame.lines.length === 0) return blame;
 
 		if (range.start.line === 0 && range.end.line === blame.lines.length - 1) {
-			return { allLines: blame.lines, ...blame };
+			return blame;
 		}
 
 		const lines = blame.lines.slice(range.start.line, range.end.line + 1);
@@ -2125,7 +2154,6 @@ export class LocalGitProvider implements GitProvider, Disposable {
 			authors: sortedAuthors,
 			commits: commits,
 			lines: lines,
-			allLines: blame.lines,
 		};
 	}
 
@@ -5115,7 +5143,7 @@ export class LocalGitProvider implements GitProvider, Disposable {
 		if (resultsPromise == null) {
 			async function load(this: LocalGitProvider): Promise<PagedResult<GitTag>> {
 				try {
-					const data = await this.git.tag(repoPath!);
+					const data = await this.git.tag(repoPath!, '-l', `--format=${parseGitTagsDefaultFormat}`);
 					return { values: parseGitTags(data, repoPath!) };
 				} catch (_ex) {
 					this._tagsCache.delete(repoPath!);
@@ -6239,6 +6267,28 @@ export class LocalGitProvider implements GitProvider, Disposable {
 				repo = await gitApi.openRepository?.(uri);
 			}
 			return repo ?? undefined;
+		} catch (ex) {
+			Logger.error(ex, scope);
+			return undefined;
+		}
+	}
+
+	@log()
+	async getBranchContributorOverview(repoPath: string, ref: string): Promise<BranchContributorOverview | undefined> {
+		const scope = getLogScope();
+
+		try {
+			const base = await this.getBaseBranchName(repoPath, ref);
+			const contributors = await this.getContributors(repoPath, {
+				ref: createRevisionRange(ref, base, '...'),
+				stats: true,
+			});
+
+			sortContributors(contributors, { orderBy: 'count:desc' });
+			return {
+				// owner: contributors.find(c => c.email === this.getCurrentUser(repoPath)?.email),
+				contributors: contributors,
+			};
 		} catch (ex) {
 			Logger.error(ex, scope);
 			return undefined;

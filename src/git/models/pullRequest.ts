@@ -2,10 +2,12 @@ import { Uri, window } from 'vscode';
 import { Schemes } from '../../constants';
 import { Container } from '../../container';
 import type { RepositoryIdentityDescriptor } from '../../gk/models/repositoryIdentities';
+import type { EnrichablePullRequest } from '../../plus/integrations/providers/models';
 import { formatDate, fromNow } from '../../system/date';
 import { memoize } from '../../system/decorators/memoize';
 import type { LeftRightCommitCountResult } from '../gitProvider';
 import type { IssueOrPullRequest, IssueRepository, IssueOrPullRequestState as PullRequestState } from './issue';
+import type { PullRequestURLIdentity } from './pullRequest.utils';
 import { createRevisionRange, shortenRevision } from './reference';
 import type { ProviderReference } from './remoteProvider';
 import type { Repository } from './repository';
@@ -414,4 +416,22 @@ export async function getOpenedPullRequestRepo(
 
 	const repo = await getOrOpenPullRequestRepository(container, pr, { promptIfNeeded: true });
 	return repo;
+}
+
+export function doesPullRequestSatisfyRepositoryURLIdentity(
+	pr: EnrichablePullRequest | undefined,
+	{ ownerAndRepo, prNumber }: PullRequestURLIdentity,
+): boolean {
+	if (pr == null) {
+		return false;
+	}
+	const satisfiesPrNumber = prNumber != null && pr.number === parseInt(prNumber, 10);
+	if (!satisfiesPrNumber) {
+		return false;
+	}
+	const satisfiesOwnerAndRepo = ownerAndRepo != null && pr.repoIdentity.name === ownerAndRepo;
+	if (!satisfiesOwnerAndRepo) {
+		return false;
+	}
+	return true;
 }

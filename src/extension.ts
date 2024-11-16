@@ -147,15 +147,18 @@ export async function activate(context: ExtensionContext): Promise<GitLensApi | 
 		previousVersion = localVersion;
 	}
 
-	let exitMessage;
-	if (Logger.enabled('debug')) {
-		exitMessage = `syncedVersion=${syncedVersion}, localVersion=${localVersion}, previousVersion=${previousVersion}, welcome=${storage.get(
-			'views:welcome:visible',
-		)}`;
+	// If there is no local previous version, this is a new install on this machine
+	if (localVersion == null) {
+		void setContext('gitlens:newInstall', true);
+	}
+	// If there is no local or synced previous version, this is a new install for this user
+	if (previousVersion == null) {
+		void setContext('gitlens:newUserInstall', true);
 	}
 
-	if (previousVersion == null) {
-		void storage.store('views:welcome:visible', true);
+	let exitMessage;
+	if (Logger.enabled('debug')) {
+		exitMessage = `syncedVersion=${syncedVersion}, localVersion=${localVersion}, previousVersion=${previousVersion}`;
 	}
 
 	Configuration.configure(context);
@@ -186,7 +189,7 @@ export async function activate(context: ExtensionContext): Promise<GitLensApi | 
 			);
 		}
 
-		void showWelcomeOrWhatsNew(container, gitlensVersion, prerelease, previousVersion);
+		void showWhatsNew(container, gitlensVersion, prerelease, previousVersion);
 
 		void storage.store(prerelease ? 'preVersion' : 'version', gitlensVersion);
 
@@ -281,7 +284,7 @@ export function deactivate() {
 // }
 
 function setKeysForSync(context: ExtensionContext, ...keys: (SyncedStorageKeys | string)[]) {
-	context.globalState?.setKeysForSync([...keys, SyncedStorageKeys.Version, SyncedStorageKeys.HomeViewWelcomeVisible]);
+	context.globalState?.setKeysForSync([...keys, SyncedStorageKeys.Version, SyncedStorageKeys.PreReleaseVersion]);
 }
 
 function registerBuiltInActionRunners(container: Container): void {
@@ -316,7 +319,7 @@ function registerBuiltInActionRunners(container: Container): void {
 	);
 }
 
-async function showWelcomeOrWhatsNew(
+async function showWhatsNew(
 	container: Container,
 	version: string,
 	prerelease: boolean,
@@ -324,30 +327,6 @@ async function showWelcomeOrWhatsNew(
 ) {
 	if (previousVersion == null) {
 		Logger.log(`GitLens first-time install; window.focused=${window.state.focused}`);
-
-		if (configuration.get('showWelcomeOnInstall') === false) return;
-
-		if (window.state.focused) {
-			await container.storage.delete('pendingWelcomeOnFocus');
-			await executeCommand(Commands.ShowWelcomePage);
-		} else {
-			// Save pending on window getting focus
-			await container.storage.store('pendingWelcomeOnFocus', true);
-			const disposable = window.onDidChangeWindowState(e => {
-				if (!e.focused) return;
-
-				disposable.dispose();
-
-				// If the window is now focused and we are pending the welcome, clear the pending state and show the welcome
-				if (container.storage.get('pendingWelcomeOnFocus') === true) {
-					void container.storage.delete('pendingWelcomeOnFocus');
-					if (configuration.get('showWelcomeOnInstall')) {
-						void executeCommand(Commands.ShowWelcomePage);
-					}
-				}
-			});
-			container.context.subscriptions.push(disposable);
-		}
 
 		return;
 	}
